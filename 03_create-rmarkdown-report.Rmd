@@ -1,0 +1,156 @@
+---
+title: "Febuxostat Q1 2017 - Q1 2020"
+author: "Michael Maguire, MS"
+date: "3/16/2021"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Request Prompt:
+
+Can you please cut the SDUD data to get only prescriptions for "febuxostat" (brand name "uloric") from Q12017 to Q12020 (each state)? Please include those that have suppressed records too.
+
+### Load libraries
+
+```{r libload, message = FALSE}
+library(dplyr)
+library(ggplot2)
+library(hrbrthemes)
+library(purrr)
+library(readr)
+library(stringr)
+library(tidylog)
+library(viridis)
+```
+
+### Step 1: Pull in SDUD dataset.
+
+Note: location of data set is a personal directory, so I have masked it.
+
+```{r locload, include = FALSE}
+loc <- "C:\\Users\\michaelqmaguire2\\Dropbox (UFL)\\01_projects\\us-medicaid-drug-utilization\\us-medicaid-drug-utilziation\\data\\clean\\medicaid-sdud-2000-2020.rds"
+```
+
+```{r sdudload, echo = TRUE}
+sdud_2017_2020 <-
+  read_rds(
+    file = loc
+  ) %>%
+  filter(year %in% c(2017:2019) | year == 2020 & quarter == 1)
+```
+
+Examine years and quarters to ensure the correct period is pulled.
+
+```{r yrqtrcheck, echo = TRUE}
+sdud_2017_2020 %>%
+  distinct(year, quarter) %>%
+  arrange(year, desc(quarter))
+```
+
+### Step 2: Flag records containing generic name.
+
+```{r genflag, echo = TRUE}
+sdud_2017_2020_gennmes <- 
+  sdud_2017_2020 %>%
+  mutate(
+    febuxostat_flag = case_when(
+      str_detect(string = gennme_c, pattern = regex("febuxostat", ignore_case = TRUE)) ~ "1",
+      TRUE ~ "0"
+    )
+  )
+```
+
+Checking flags.
+
+```{r flagcheck, echo = TRUE}
+sdud_2017_2020_gennmes %>%
+  select(febuxostat_flag) %>%
+  map(., janitor::tabyl)
+```
+
+### Step 3: Aggregate by state, year, quarter and sum.
+
+```{r aggin, echo = TRUE}
+# Filter off on flags created above.
+sdud_2017_2020_febux_flags <-
+  sdud_2017_2020_gennmes %>%
+  filter(
+    febuxostat_flag == "1"
+  )
+# Create data set containing generic name, brand name, and ndc number.
+ndc_gen_brand_names <- 
+  sdud_2017_2020_febux_flags %>%
+  distinct(gennme_c, prodnme, ndc)
+# Examine data set.
+ndc_gen_brand_names
+# Create aggregate by state, year, quarter, and suppression.
+sdud_2017_2020_febux_rx <-
+  sdud_2017_2020_febux_flags %>%
+  group_by(state, year, quarter, gennme_c, suppression_used) %>%
+  summarize(total_prescriptions = sum(number_of_prescriptions))
+# Create aggregate by state, year, quarter, generic name, and suppression. 
+sdud_2017_2020_febux <- 
+  sdud_2017_2020_febux_flags %>%
+  group_by(state, year, quarter, suppression_used) %>%
+  summarize(total_prescriptions = sum(number_of_prescriptions))
+```
+
+### Step 4: Plot number of prescriptions over time.
+
+```{r plots, echo = TRUE, fig.width = 12, fig.height = 8}
+# Plot showing number of prescriptions by year and quarter.
+ggplot(data = sdud_2017_2020_febux) +
+  geom_col(aes(x = paste0(year, "-", quarter), y = total_prescriptions), fill = "forestgreen", alpha = 0.95) +
+    scale_y_continuous(labels = scales::comma) + 
+    theme_ipsum_rc(axis_title_just = "ct") +
+    ggtitle("Number of Prescriptions by Year and Quarter") +
+    xlab("Year-Quarter") +
+    ylab("Total Number of Prescriptions") +
+    theme(
+      axis.text.x = element_text(color = "black"),
+      axis.text.y = element_text(color = "black"),
+      axis.title.x = element_text(color = "black", size = 10),
+      axis.title.y = element_text(color = "black", size = 10),
+    ) +
+    coord_cartesian(expand = FALSE)
+# Plot showing number of prescriptions by year, quarter, and generic name.
+ggplot(data = sdud_2017_2020_febux_rx) +
+  geom_col(aes(x = paste0(year, "-", quarter), y = total_prescriptions, fill = gennme_c)) +
+    scale_fill_viridis_d(direction = -1) +
+    scale_y_continuous(labels = scales::comma) +
+    theme_ipsum_rc(axis_title_just = "ct") +
+    ggtitle("Number of Prescriptions by Generic Name, Year, and Quarter") +
+    xlab("Year-Quarter") +
+    ylab("Total Number of Prescriptions") +
+    labs(fill = "Generic Name") +
+    theme(
+      axis.text.x = element_text(color = "black"),
+      axis.text.y = element_text(color = "black"),
+      axis.title.x = element_text(color = "black", size = 12),
+      axis.title.y = element_text(color = "black", size = 12)
+    ) +
+    coord_cartesian(expand = FALSE)
+```
+```{r plotrx, fig.height = 12, fig.width = 16}
+# Plot showing number of prescriptions by year, quarter, and state.
+ggplot(data = sdud_2017_2020_febux) +
+  geom_col(aes(x = paste0(year, "-", quarter), y = total_prescriptions, fill = state), alpha = 0.95) +
+    scale_fill_viridis_d() +
+    scale_y_continuous(labels = scales::comma) + 
+    theme_ipsum_rc(axis_title_just = "ct") +
+    ggtitle("Number of Prescriptions by Year, Quarter, and State") +
+    xlab("Year-Quarter") +
+    ylab("Total Number of Prescriptions") +
+    theme(
+      axis.text.x = element_text(color = "black", angle = 90, size = 10, hjust = 0.25, vjust = 0.25),
+      axis.text.y = element_text(color = "black"),
+      axis.title.x = element_text(color = "black", size = 10),
+      axis.title.y = element_text(color = "black", size = 10),
+      legend.position = "none"
+    ) +
+    facet_wrap(~state) +
+    coord_cartesian(expand = FALSE)
+```
